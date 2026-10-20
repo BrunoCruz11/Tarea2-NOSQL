@@ -1,0 +1,118 @@
+# ShopExpress: 3 microservicios, cada uno con su propia base.
+# Cada Mongo corre como replica set de un solo nodo (rs0): lo necesitamos para
+# las transacciones multi-documento y para que writeConcern/readConcern "majority"
+# tengan sentido. El healthcheck lo inicializa solo la primera vez que arranca.
+
+x-mongo: &mongo
+  image: mongo:7.0
+  command: ["--replSet", "rs0", "--bind_ip_all"]
+  healthcheck:
+    # Si el replica set no existe, lo crea con este mismo nodo.
+    # Queda "healthy" recién cuando el nodo es PRIMARY y acepta escrituras.
+    test:
+      - CMD-SHELL
+      - >-
+        mongosh --quiet --eval "try { rs.status() } catch (e) {
+        rs.initiate({_id: 'rs0', members: [{_id: 0, host: '$$(hostname):27017'}]}) };
+        quit(db.hello().isWritablePrimary ? 0 : 1)"
+    interval: 10s
+    timeout: 10s
+    retries: 10
+    start_period: 30s
+    start_interval: 2s
+
+x-redis: &redis
+  image: redis:7.4-alpine
+  # Solo caché: sin persistencia en disco y con desalojo LRU cuando se llena.
+  command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 5s
+    start_interval: 1s
+
+x-servicio-healthcheck: &servicio-healthcheck
+  test: ["CMD", "python", "-c", "import os, urllib.request; urllib.request.urlopen('http://localhost:' + os.environ['PORT'] + '/health')"]
+  interval: 10s
+  timeout: 5s
+  retries: 5
+  start_period: 10s
+  start_interval: 2s
+
+services:
+  # ---------- Usuarios ----------
+  mongo-usuarios:
+    <<: *mongo
+    hostname: mongo-usuarios
+    ports: ["27017:27017"]
+    volumes: [mongo-usuarios-datos:/data/db]
+
+  redis-usuarios:
+    <<: *redis
+    hostname: redis-usuarios
+
+  usuarios-service:
+    build: ./servicios/usuarios
+    ports: ["8001:8001"]
+    environment:
+      PORT: 8001
+      MONGO_URL: mongodb://mongo-usuarios:27017/?replicaSet=rs0&w=majority
+      MONGO_DB: usuarios
+      REDIS_URL: redis://redis-usuarios:6379/0
+    healthcheck: *servicio-healthcheck
+    depends_on:
+      mongo-usuarios: {condition: service_healthy}
+      redis-usuarios: {condition: service_healthy}
+
+  # ---------- Catálogo e Inventario ----------
+  mongo-catalogo:
+    <<: *mongo
+    hostname: mongo-catalogo
+    ports: ["27018:27017"]
+    volumes: [mongo-catalogo-datos:/data/db]
+
+  redis-catalogo:
+    <<: *redis
+    hostname: redis-catalogo
+
+  catalogo-service:
+    build: ./servicios/catalogo
+    ports: ["8002:8002"]
+    environment:
+      PORT: 8002
+      MONGO_URL: mongodb://mongo-catalogo:27017/?replicaSet=rs0&w=majority&readConcernLevel=majority
+      MONGO_DB: catalogo
+      REDIS_URL: redis://redis-catalogo:6379/0
+    healthcheck: *servicio-healthcheck
+    depends_on:
+      mongo-catalogo: {condition: service_healthy}
+      redis-catalogo: {condition: service_healthy}
+
+  # ---------- Pedidos y Pagos ----------
+  mongo-pedidos:
+    <<: *mongo
+    hostname: mongo-pedidos
+    ports: ["27019:27017"]
+    volumes: [mongo-pedidos-datos:/data/db]
+
+  pedidos-service:
+    build: ./servicios/pedidos
+    ports: ["8003:8003"]
+    environment:
+      PORT: 8003
+      MONGO_URL: mongodb://mongo-pedidos:27017/?replicaSet=rs0&w=majority&readConcernLevel=majority
+      MONGO_DB: pedidos
+      USUARIOS_URL: http://usuarios-service:8001
+      CATALOGO_URL: http://catalogo-service:8002
+    healthcheck: *servicio-healthcheck
+    depends_on:
+      mongo-pedidos: {condition: service_healthy}
+      usuarios-service: {condition: service_healthy}
+      catalogo-service: {condition: service_healthy}
+
+volumes:
+  mongo-usuarios-datos:
+  mongo-catalogo-datos:
+  mongo-pedidos-datos:
