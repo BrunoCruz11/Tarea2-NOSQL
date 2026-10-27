@@ -61,6 +61,7 @@ services:
       MONGO_URL: mongodb://mongo-usuarios:27017/?replicaSet=rs0&w=majority
       MONGO_DB: usuarios
       REDIS_URL: redis://redis-usuarios:6379/0
+      CACHE_TTL_SEGUNDOS: 60
     healthcheck: *servicio-healthcheck
     depends_on:
       mongo-usuarios: {condition: service_healthy}
