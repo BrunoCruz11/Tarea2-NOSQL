@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from app import cache, config, db
+from app.routers import internos, productos
 
 
 @asynccontextmanager
@@ -16,6 +17,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="ShopExpress - Servicio de Catálogo e Inventario", lifespan=lifespan)
+app.include_router(productos.router)
+app.include_router(internos.router)
 
 
 @app.get("/health")

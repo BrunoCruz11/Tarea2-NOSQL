@@ -86,6 +86,7 @@ services:
       MONGO_URL: mongodb://mongo-catalogo:27017/?replicaSet=rs0&w=majority&readConcernLevel=majority
       MONGO_DB: catalogo
       REDIS_URL: redis://redis-catalogo:6379/0
+      CACHE_TTL_SEGUNDOS: 30
     healthcheck: *servicio-healthcheck
     depends_on:
       mongo-catalogo: {condition: service_healthy}
