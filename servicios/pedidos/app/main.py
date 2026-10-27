@@ -3,17 +3,21 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from app import config, db
+from app import clientes, config, db
+from app.routers import pedidos
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.conectar()
+    clientes.conectar()
     yield
     db.desconectar()
+    await clientes.desconectar()
 
 
 app = FastAPI(title="ShopExpress - Servicio de Pedidos y Pagos", lifespan=lifespan)
+app.include_router(pedidos.router)
 
 
 @app.get("/health")

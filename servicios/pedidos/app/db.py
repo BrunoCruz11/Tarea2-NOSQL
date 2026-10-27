@@ -7,7 +7,7 @@ _cliente: AsyncIOMotorClient | None = None
 
 def conectar() -> None:
     global _cliente
-    _cliente = AsyncIOMotorClient(config.MONGO_URL, serverSelectionTimeoutMS=3000)
+    _cliente = AsyncIOMotorClient(config.MONGO_URL, serverSelectionTimeoutMS=3000, tz_aware=True)
 
 
 def desconectar() -> None:

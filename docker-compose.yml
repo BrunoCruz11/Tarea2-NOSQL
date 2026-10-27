@@ -108,6 +108,7 @@ services:
       MONGO_DB: pedidos
       USUARIOS_URL: http://usuarios-service:8001
       CATALOGO_URL: http://catalogo-service:8002
+      LIMITE_PAGO: 5000
     healthcheck: *servicio-healthcheck
     depends_on:
       mongo-pedidos: {condition: service_healthy}
