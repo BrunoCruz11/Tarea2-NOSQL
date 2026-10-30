@@ -4,6 +4,7 @@ Recibe y devuelve modelos de Pydantic, así el resto del servicio no sabe nada
 de `_id`, colecciones ni errores de pymongo.
 """
 
+from collections.abc import AsyncIterator
 from uuid import uuid4
 
 from pymongo import ReturnDocument
@@ -74,3 +75,9 @@ async def agregar_pedido(usuario_id: str, pedido_id: str) -> Usuario | None:
         return_document=ReturnDocument.AFTER,
     )
     return _a_modelo(documento) if documento else None
+
+
+async def listar() -> AsyncIterator[Usuario]:
+    """Recorre todos los usuarios de a uno (el cursor de Mongo los trae por tandas)."""
+    async for documento in _coleccion().find():
+        yield _a_modelo(documento)

@@ -7,6 +7,10 @@ Cada test crea sus propios usuarios con email y documento al azar, así se puede
 correr muchas veces sin borrar la base.
 """
 
+import csv
+import hashlib
+import hmac
+import io
 import os
 from uuid import uuid4
 
@@ -154,3 +158,68 @@ def test_pedido_id_sin_prefijo_da_422(cliente):
     respuesta = cliente.post(f"/api/usuarios/{usuario['id']}/historial", json={"pedido_id": "123"})
 
     assert respuesta.status_code == 422
+
+
+# ---------- GET /api/usuarios/exportar ----------
+
+# La misma que en el docker-compose: con ella el test calcula el hash esperado.
+CLAVE_SEUDONIMIZACION = os.environ.get("CLAVE_SEUDONIMIZACION", "clave-de-demo-shopexpress")
+
+
+def seudonimo(valor: str) -> str:
+    return hmac.new(CLAVE_SEUDONIMIZACION.encode(), valor.encode(), hashlib.sha256).hexdigest()
+
+
+def buscar_exportado(exportados: list[dict], usuario: dict) -> dict:
+    return next(u for u in exportados if u["email_hash"] == seudonimo(usuario["email"]))
+
+
+def test_exportar_json_seudonimiza_los_datos_personales(cliente):
+    usuario = crear_usuario(cliente, nombre="Juan Carlos", apellido="Pérez Gómez")
+
+    respuesta = cliente.get("/api/usuarios/exportar")
+
+    assert respuesta.status_code == 200
+    exportado = buscar_exportado(respuesta.json(), usuario)
+    assert exportado == {
+        "tipo_documento": "DNI",
+        "documento_hash": seudonimo(f"DNI:{usuario['nro_documento']}"),
+        "email_hash": seudonimo(usuario["email"]),
+        "nombre": "J. C.",
+        "apellido": "P. G.",
+        "direcciones": [{"ciudad": "Montevideo", "codigo_postal": "11000"}],
+        "cantidad_pedidos": 0,
+    }
+    # Nada que identifique a la persona aparece en la respuesta.
+    for dato in (usuario["email"], usuario["nro_documento"], "Juan", "Pérez", "Av. Principal"):
+        assert dato not in respuesta.text
+
+
+def test_exportar_cuenta_los_pedidos_del_historial(cliente):
+    usuario = crear_usuario(cliente)
+    cliente.post(f"/api/usuarios/{usuario['id']}/historial", json={"pedido_id": "ord_exp1"})
+    cliente.post(f"/api/usuarios/{usuario['id']}/historial", json={"pedido_id": "ord_exp2"})
+
+    exportado = buscar_exportado(cliente.get("/api/usuarios/exportar").json(), usuario)
+
+    assert exportado["cantidad_pedidos"] == 2
+
+
+def test_exportar_csv_se_descarga_como_archivo(cliente):
+    usuario = crear_usuario(cliente)
+
+    respuesta = cliente.get("/api/usuarios/exportar", params={"formato": "csv"})
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"].startswith("text/csv")
+    assert "attachment" in respuesta.headers["content-disposition"]
+    filas = list(csv.DictReader(io.StringIO(respuesta.text)))
+    fila = next(f for f in filas if f["email_hash"] == seudonimo(usuario["email"]))
+    assert fila["nombre"] == "J."
+    assert fila["direcciones"] == "Montevideo (11000)"
+    assert fila["cantidad_pedidos"] == "0"
+    assert usuario["email"] not in respuesta.text
+
+
+def test_exportar_con_formato_desconocido_da_422(cliente):
+    assert cliente.get("/api/usuarios/exportar", params={"formato": "xml"}).status_code == 422

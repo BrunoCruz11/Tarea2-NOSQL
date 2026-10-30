@@ -4,8 +4,8 @@ Acá vive el patrón cache-aside: el repositorio no sabe que existe Redis y los
 routers no saben de dónde salió el dato.
 """
 
-from app import cache, repositorio
-from app.modelos import Usuario, UsuarioCrear
+from app import anonimizacion, cache, repositorio
+from app.modelos import Usuario, UsuarioAnonimo, UsuarioCrear
 
 
 class UsuarioNoEncontrado(Exception):
@@ -52,3 +52,12 @@ async def agregar_pedido_al_historial(usuario_id: str, pedido_id: str) -> Usuari
     # va a ser MISS y trae el historial actualizado.
     await cache.borrar(_clave_cache(usuario_id))
     return usuario
+
+
+async def exportar_usuarios() -> list[UsuarioAnonimo]:
+    """Todos los usuarios, seudonimizados.
+
+    Lee directo de Mongo y no pasa por la caché: es un volcado completo, no una
+    lectura de un usuario puntual.
+    """
+    return [anonimizacion.anonimizar(usuario) async for usuario in repositorio.listar()]

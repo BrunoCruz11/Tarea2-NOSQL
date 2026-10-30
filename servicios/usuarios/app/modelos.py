@@ -53,3 +53,20 @@ class PedidoEnHistorial(BaseModel):
     """Body del endpoint interno que usa el servicio de pedidos al confirmar una compra."""
 
     pedido_id: str = Field(pattern=r"^ord_\w+$", examples=["ord_98765"])
+
+
+class DireccionAnonima(BaseModel):
+    ciudad: str = Field(examples=["Montevideo"])
+    codigo_postal: str = Field(examples=["11000"])
+
+
+class UsuarioAnonimo(BaseModel):
+    """Usuario tal como sale en GET /api/usuarios/exportar (ver anonimizacion.py)."""
+
+    tipo_documento: str = Field(examples=["DNI"])
+    documento_hash: str = Field(examples=["9f2c…"])
+    email_hash: str = Field(examples=["4b1a…"])
+    nombre: str = Field(examples=["J."])
+    apellido: str = Field(examples=["P."])
+    direcciones: list[DireccionAnonima]
+    cantidad_pedidos: int = Field(examples=[3])

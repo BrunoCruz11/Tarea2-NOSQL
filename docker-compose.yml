@@ -62,6 +62,8 @@ services:
       MONGO_DB: usuarios
       REDIS_URL: redis://redis-usuarios:6379/0
       CACHE_TTL_SEGUNDOS: 60
+      # Para la demo va acá; en producción saldría de un gestor de secretos.
+      CLAVE_SEUDONIMIZACION: clave-de-demo-shopexpress
     healthcheck: *servicio-healthcheck
     depends_on:
       mongo-usuarios: {condition: service_healthy}
