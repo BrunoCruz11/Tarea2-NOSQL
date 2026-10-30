@@ -12,6 +12,8 @@ class ProductoCrear(BaseModel):
 
     nombre: str = Field(min_length=1, examples=["Auriculares inalámbricos"])
     descripcion: str = Field(default="", examples=["Bluetooth 5.3, 30 horas de batería"])
+    # Embebida como texto: se lee siempre junto con el producto y no tiene datos propios.
+    categoria: str = Field(min_length=1, examples=["Electrónica"])
     precio: float = Field(gt=0, examples=[59.99])
     stock: int = Field(ge=0, examples=[10])
 
@@ -20,6 +22,8 @@ class Producto(ProductoCrear):
     """Producto completo, tal como lo devuelve la API (y como se guarda en la caché)."""
 
     id: str = Field(examples=["prod_3f9a1c2b7d4e"])
+    # Al crear es obligatoria; el default es para los productos guardados antes de que existiera el campo.
+    categoria: str = Field(default="Sin categoría", examples=["Electrónica"])
 
 
 class ItemReserva(BaseModel):

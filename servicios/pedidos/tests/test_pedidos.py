@@ -42,7 +42,7 @@ def usuario(cliente) -> dict:
 
 def crear_producto(cliente, precio: float, stock: int = 10) -> dict:
     respuesta = cliente.post(
-        f"{CATALOGO_URL}/api/productos", json={"nombre": "Producto de prueba", "precio": precio, "stock": stock}
+        f"{CATALOGO_URL}/api/productos", json={"nombre": "Producto de prueba", "categoria": "Pruebas", "precio": precio, "stock": stock}
     )
     assert respuesta.status_code == 201, respuesta.text
     return respuesta.json()
@@ -52,16 +52,22 @@ def stock_actual(cliente, producto_id: str) -> int:
     return cliente.get(f"{CATALOGO_URL}/api/productos/{producto_id}").json()["stock"]
 
 
-def crear_pedido(cliente, body):
-    return cliente.post(f"{PEDIDOS_URL}/api/pedidos", json=body)
+def crear_pedido(cliente, body, clave: str | None = None):
+    """Cada llamada es una compra nueva (clave al azar), salvo que se pase la misma clave."""
+    clave = clave or f"test-{uuid4().hex}"
+    return cliente.post(f"{PEDIDOS_URL}/api/pedidos", json=body, headers={"Idempotency-Key": clave})
 
 
-def pedir(cliente, usuario_id: str, *items: tuple[str, int], metodo_pago: str = "TARJETA_CREDITO"):
-    return crear_pedido(cliente, {
+def body_pedido(usuario_id: str, *items: tuple[str, int], metodo_pago: str = "TARJETA_CREDITO") -> dict:
+    return {
         "usuario_id": usuario_id,
         "items": [{"producto_id": p, "cantidad": c} for p, c in items],
         "metodo_pago": metodo_pago,
-    })
+    }
+
+
+def pedir(cliente, usuario_id: str, *items: tuple[str, int], metodo_pago: str = "TARJETA_CREDITO", clave=None):
+    return crear_pedido(cliente, body_pedido(usuario_id, *items, metodo_pago=metodo_pago), clave)
 
 
 def pasos(pedido: dict) -> list[tuple[str, str]]:
@@ -251,3 +257,138 @@ def test_sin_stock_da_409_y_no_toca_el_inventario(cliente, usuario):
     assert respuesta.status_code == 409
     assert producto["id"] in respuesta.json()["detail"]
     assert stock_actual(cliente, producto["id"]) == 2
+
+
+# ---------- GET /api/pedidos/{pedido_id}/eventos ----------
+
+def eventos(cliente, pedido_id: str) -> list[dict]:
+    respuesta = cliente.get(f"{PEDIDOS_URL}/api/pedidos/{pedido_id}/eventos")
+    assert respuesta.status_code == 200, respuesta.text
+    return respuesta.json()
+
+
+def reconstruir(eventos: list[dict]) -> dict:
+    """Event Sourcing: arma el pedido solo a partir de sus eventos, aplicando los cambios en orden."""
+    pedido: dict = {}
+    for evento in eventos:
+        for cambio in evento["cambios"]:
+            *ruta, campo = cambio["campo"].split(".")  # "pago.estado_pago" → pedido["pago"]["estado_pago"]
+            destino = pedido
+            for parte in ruta:
+                destino = destino.setdefault(parte, {})
+            destino[campo] = cambio["valor"]
+    return pedido
+
+
+def test_cada_paso_de_la_saga_queda_como_evento(cliente, usuario):
+    producto = crear_producto(cliente, precio=10)
+    pedido = pedir(cliente, usuario["id"], (producto["id"], 1)).json()
+
+    lista = eventos(cliente, pedido["pedido_id"])
+
+    assert [(e["paso"], e["resultado"]) for e in lista] == pasos(pedido)
+    assert [e["secuencia"] for e in lista] == [1, 2, 3, 4]
+    assert all(e["evento_id"].startswith("evt_") and e["pedido_id"] == pedido["pedido_id"] for e in lista)
+
+
+def test_las_compensaciones_tambien_quedan_como_eventos(cliente, usuario):
+    producto = crear_producto(cliente, precio=10)
+    pedido = pedir(cliente, usuario["id"], (producto["id"], 1), metodo_pago="TARJETA_RECHAZADA").json()
+
+    lista = eventos(cliente, pedido["pedido_id"])
+
+    assert [e["paso"] for e in lista] == [
+        "CREAR_PEDIDO", "RESERVAR_STOCK", "PROCESAR_PAGO", "LIBERAR_STOCK", "CANCELAR_PEDIDO",
+    ]
+
+
+@pytest.mark.parametrize("metodo_pago", ["TARJETA_CREDITO", "TARJETA_RECHAZADA"])
+def test_con_los_eventos_se_reconstruye_el_pedido(cliente, usuario, metodo_pago):
+    producto = crear_producto(cliente, precio=12.5)
+    pedido = pedir(cliente, usuario["id"], (producto["id"], 2), metodo_pago=metodo_pago).json()
+
+    reconstruido = reconstruir(eventos(cliente, pedido["pedido_id"]))
+
+    guardado = cliente.get(f"{PEDIDOS_URL}/api/pedidos/{pedido['pedido_id']}").json()
+    for campo in ("usuario_id", "estado", "items", "total", "pago"):
+        assert reconstruido[campo] == guardado[campo], campo
+
+
+def test_eventos_de_pedido_inexistente_da_404(cliente):
+    assert cliente.get(f"{PEDIDOS_URL}/api/pedidos/ord_noexiste/eventos").status_code == 404
+
+
+# ---------- ValidadorDeIdempotencia: un pedido es único ----------
+
+def historial_usuario(cliente, usuario_id: str) -> list[str]:
+    return cliente.get(f"{USUARIOS_URL}/api/usuarios/{usuario_id}").json()["historial_pedidos"]
+
+
+def test_sin_idempotency_key_da_400(cliente, usuario):
+    producto = crear_producto(cliente, precio=10)
+
+    respuesta = cliente.post(f"{PEDIDOS_URL}/api/pedidos", json=body_pedido(usuario["id"], (producto["id"], 1)))
+
+    assert respuesta.status_code == 400
+    assert "Idempotency-Key" in respuesta.json()["detail"]
+    assert stock_actual(cliente, producto["id"]) == 10
+
+
+def test_el_mismo_pedido_dos_veces_crea_uno_solo(cliente, usuario):
+    producto = crear_producto(cliente, precio=10, stock=10)
+    clave = f"test-{uuid4().hex}"
+
+    primera = pedir(cliente, usuario["id"], (producto["id"], 2), clave=clave)
+    segunda = pedir(cliente, usuario["id"], (producto["id"], 2), clave=clave)
+
+    assert primera.status_code == 201
+    assert segunda.status_code == 200  # no se creó nada nuevo
+    assert segunda.json() == primera.json()
+    assert stock_actual(cliente, producto["id"]) == 8  # se descontó una sola vez
+    assert historial_usuario(cliente, usuario["id"]) == [primera.json()["pedido_id"]]
+
+
+def test_reintentar_un_pedido_cancelado_devuelve_el_mismo(cliente, usuario):
+    producto = crear_producto(cliente, precio=10, stock=5)
+    clave = f"test-{uuid4().hex}"
+
+    primera = pedir(cliente, usuario["id"], (producto["id"], 1), metodo_pago="TARJETA_RECHAZADA", clave=clave)
+    segunda = pedir(cliente, usuario["id"], (producto["id"], 1), metodo_pago="TARJETA_RECHAZADA", clave=clave)
+
+    assert primera.status_code == 402
+    assert segunda.status_code == 200
+    assert segunda.json()["pedido_id"] == primera.json()["pedido_id"]
+    assert segunda.json()["estado"] == "CANCELADO"
+    assert stock_actual(cliente, producto["id"]) == 5
+
+
+def test_la_misma_clave_con_otro_pedido_da_422(cliente, usuario):
+    producto = crear_producto(cliente, precio=10, stock=10)
+    clave = f"test-{uuid4().hex}"
+    pedir(cliente, usuario["id"], (producto["id"], 1), clave=clave)
+
+    respuesta = pedir(cliente, usuario["id"], (producto["id"], 5), clave=clave)
+
+    assert respuesta.status_code == 422
+    assert stock_actual(cliente, producto["id"]) == 9
+
+
+def test_el_mismo_pedido_muchas_veces_a_la_vez_crea_uno_solo(cliente, usuario):
+    # Los requests pasan juntos por ValidadorDeIdempotencia sin ver nada; el que
+    # decide es el índice único al insertar el pedido.
+    producto = crear_producto(cliente, precio=10, stock=10)
+    clave = f"test-{uuid4().hex}"
+
+    with ThreadPoolExecutor(max_workers=10) as hilos:
+        respuestas = list(hilos.map(
+            lambda _: pedir(cliente, usuario["id"], (producto["id"], 1), clave=clave), range(10)
+        ))
+
+    codigos = [r.status_code for r in respuestas]
+    assert codigos.count(201) == 1
+    # Los demás: 200 si el primero ya había terminado, 409 si todavía estaba en curso.
+    assert set(codigos) <= {200, 201, 409}
+    ids = {r.json()["pedido_id"] for r in respuestas if r.status_code in (200, 201)}
+    assert len(ids) == 1
+    assert stock_actual(cliente, producto["id"]) == 9
+    assert historial_usuario(cliente, usuario["id"]) == list(ids)

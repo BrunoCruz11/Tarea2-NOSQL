@@ -1,4 +1,4 @@
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorClientSession, AsyncIOMotorDatabase
 
 from app import config
 
@@ -17,6 +17,11 @@ def desconectar() -> None:
 
 def obtener_db() -> AsyncIOMotorDatabase:
     return _cliente[config.MONGO_DB]
+
+
+async def iniciar_sesion() -> AsyncIOMotorClientSession:
+    """Sesión para transacciones multi-documento (por eso Mongo corre como replica set)."""
+    return await _cliente.start_session()
 
 
 async def estado() -> dict:

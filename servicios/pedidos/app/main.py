@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from app import clientes, config, db
+from app import clientes, config, db, repositorio
 from app.routers import pedidos
 
 
@@ -11,6 +11,7 @@ from app.routers import pedidos
 async def lifespan(app: FastAPI):
     db.conectar()
     clientes.conectar()
+    await repositorio.crear_indices()
     yield
     db.desconectar()
     await clientes.desconectar()

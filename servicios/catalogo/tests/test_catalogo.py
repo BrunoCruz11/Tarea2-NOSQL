@@ -23,7 +23,7 @@ def cliente():
 
 
 def crear_producto(cliente, **cambios) -> dict:
-    datos = {"nombre": "Auriculares", "descripcion": "Bluetooth", "precio": 59.99, "stock": 10, **cambios}
+    datos = {"nombre": "Auriculares", "descripcion": "Bluetooth", "categoria": "Electrónica", "precio": 59.99, "stock": 10, **cambios}
     respuesta = cliente.post("/api/productos", json=datos)
     assert respuesta.status_code == 201, respuesta.text
     return respuesta.json()
@@ -52,11 +52,15 @@ def test_crear_producto_devuelve_id_con_prefijo(cliente):
 
     assert producto["id"].startswith("prod_")
     assert producto["stock"] == 7
+    assert producto["categoria"] == "Electrónica"
 
 
-@pytest.mark.parametrize("cambios", [{"nombre": ""}, {"precio": 0}, {"stock": -1}, {"stock": 1.5}])
+@pytest.mark.parametrize(
+    "cambios", [{"nombre": ""}, {"precio": 0}, {"stock": -1}, {"stock": 1.5}, {"categoria": ""}, {"categoria": None}]
+)
 def test_datos_invalidos_dan_422(cliente, cambios):
-    datos = {"nombre": "Auriculares", "precio": 10, "stock": 1, **cambios}
+    datos = {"nombre": "Auriculares", "categoria": "Electrónica", "precio": 10, "stock": 1, **cambios}
+    datos = {clave: valor for clave, valor in datos.items() if valor is not None}  # None = sin ese campo
 
     assert cliente.post("/api/productos", json=datos).status_code == 422
 

@@ -5,6 +5,7 @@ El Pedido sigue la estructura del anexo de la letra, más el historial de la sag
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -95,4 +96,29 @@ class Pedido(BaseModel):
     items: list[LineaPedido]
     total: float = Field(examples=[51.00])
     pago: Pago
+    # La manda el cliente en el header Idempotency-Key; None en pedidos anteriores a ese header.
+    idempotency_key: str | None = Field(default=None, examples=["compra-7f3a9c"])
     historial: list[PasoHistorial] = []
+
+
+class CambioEvento(BaseModel):
+    campo: str = Field(examples=["pago.estado_pago"])
+    valor: Any = Field(examples=["APROBADO"])
+
+
+class Evento(BaseModel):
+    """Un hecho de la saga, guardado aparte en la colección `eventos`.
+
+    Los eventos solo se agregan, nunca se modifican ni se borran. Aplicando los
+    `cambios` de todos los eventos de un pedido, en orden de `secuencia`, se llega
+    al mismo estado que tiene el documento del pedido.
+    """
+
+    evento_id: str = Field(examples=["evt_3f9a1c2b7d4e"])
+    pedido_id: str = Field(examples=["ord_98765"])
+    secuencia: int = Field(examples=[1])  # 1, 2, 3...: el orden dentro del pedido
+    paso: str = Field(examples=["RESERVAR_STOCK"])
+    resultado: ResultadoPaso
+    detalle: str = Field(examples=["Stock reservado en catálogo"])
+    cambios: list[CambioEvento] = []
+    fecha: datetime

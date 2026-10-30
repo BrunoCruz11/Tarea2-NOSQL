@@ -1,10 +1,10 @@
 """Endpoints públicos del servicio de pedidos."""
 
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 
 from app import repositorio
 from app.cadena import ContextoPedido, ErrorDePedido, construir_cadena
-from app.modelos import Pedido
+from app.modelos import Evento, Pedido
 
 router = APIRouter(prefix="/api/pedidos", tags=["pedidos"])
 
@@ -25,10 +25,17 @@ _EJEMPLO_BODY = {
 
 
 @router.post("", response_model=Pedido, status_code=status.HTTP_201_CREATED, openapi_extra=_EJEMPLO_BODY)
-async def crear_pedido(request: Request, response: Response):
+async def crear_pedido(
+    request: Request,
+    response: Response,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
     """Corre la cadena de validaciones y la saga.
 
+    El header Idempotency-Key es obligatorio: un id único por compra que elige el cliente.
+
     - Si una validación falla: el error correspondiente y no se crea el pedido.
+    - Si ya hay un pedido con esa Idempotency-Key: 200 con ese pedido (no se crea otro).
     - Si la saga sale bien: 201 con el pedido CONFIRMADO.
     - Si la saga falla: el pedido CANCELADO con su historial, y el código del paso
       que falló (409 sin stock, 402 pago rechazado, 503 servicio caído).
@@ -38,7 +45,7 @@ async def crear_pedido(request: Request, response: Response):
     except ValueError:
         body = None  # JSON mal formado: ValidadorDeDatos lo rechaza con 422
 
-    contexto = ContextoPedido(body=body)
+    contexto = ContextoPedido(body=body, idempotency_key=idempotency_key)
     try:
         await _cadena.manejar(contexto)
     except ErrorDePedido as error:
@@ -55,3 +62,11 @@ async def obtener_pedido(pedido_id: str):
     if pedido is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Pedido no encontrado")
     return pedido
+
+
+@router.get("/{pedido_id}/eventos", response_model=list[Evento])
+async def obtener_eventos(pedido_id: str):
+    """Los eventos de la saga del pedido, en el orden en que ocurrieron."""
+    if await repositorio.obtener(pedido_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Pedido no encontrado")
+    return await repositorio.listar_eventos(pedido_id)

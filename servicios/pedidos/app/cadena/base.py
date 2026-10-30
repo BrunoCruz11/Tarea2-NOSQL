@@ -2,7 +2,9 @@
 
 Cada manejador hace una sola verificación (o un solo cálculo) y, si sale bien,
 le pasa el contexto al siguiente. Si algo falla levanta ErrorDePedido: la cadena
-se corta ahí y los manejadores que siguen no se ejecutan.
+se corta ahí y los manejadores que siguen no se ejecutan. Un manejador también
+puede terminar la cadena con una respuesta (contexto.terminado), como hace
+ValidadorDeIdempotencia cuando el pedido ya existe.
 """
 
 from abc import ABC, abstractmethod
@@ -26,6 +28,7 @@ class ContextoPedido:
     """Lo que va pasando de un manejador al siguiente. Cada uno completa su parte."""
 
     body: Any  # el JSON tal como llegó, sin validar
+    idempotency_key: str | None = None  # el header Idempotency-Key
     datos: PedidoCrear | None = None  # ValidadorDeDatos
     usuario: dict | None = None  # ValidadorDeUsuario
     productos: dict[str, dict] = field(default_factory=dict)  # ValidadorDeStock, por producto_id
@@ -33,6 +36,7 @@ class ContextoPedido:
     total: float | None = None  # CalculadorDeTotal
     pedido: Pedido | None = None  # IniciadorDeSaga
     status_code: int | None = None  # IniciadorDeSaga: 201 si se confirmó, o el error del paso que falló
+    terminado: bool = False  # True si un manejador ya armó la respuesta y no hay que seguir
 
 
 class Manejador(ABC):
@@ -46,7 +50,7 @@ class Manejador(ABC):
 
     async def manejar(self, contexto: ContextoPedido) -> None:
         await self.procesar(contexto)
-        if self._siguiente is not None:
+        if self._siguiente is not None and not contexto.terminado:
             await self._siguiente.manejar(contexto)
 
     @abstractmethod

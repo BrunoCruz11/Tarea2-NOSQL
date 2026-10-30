@@ -27,7 +27,7 @@ URL = os.environ.get("CATALOGO_URL", "http://localhost:8002")
 
 async def crear_producto(cliente: httpx.AsyncClient, stock: int) -> dict:
     respuesta = await cliente.post(
-        "/api/productos", json={"nombre": "Consola edición limitada", "precio": 499.99, "stock": stock}
+        "/api/productos", json={"nombre": "Consola edición limitada", "categoria": "Videojuegos", "precio": 499.99, "stock": stock}
     )
     respuesta.raise_for_status()
     return respuesta.json()

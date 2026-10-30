@@ -69,7 +69,11 @@ class CrearPedido(Paso):
 
     async def ejecutar(self, pedido):
         await repositorio.crear(pedido)
-        return "Pedido creado como PENDIENTE", {}
+        # Los datos iniciales van como cambios: en el pedido no modifican nada (ya
+        # están), pero quedan en el evento, y con eso los eventos alcanzan para
+        # reconstruir el pedido entero.
+        datos_iniciales = pedido.model_dump(mode="json", include={"usuario_id", "estado", "items", "total", "pago"})
+        return "Pedido creado como PENDIENTE", datos_iniciales
 
     async def compensar(self, pedido):
         return "Pedido cancelado", {"estado": EstadoPedido.CANCELADO}
@@ -150,12 +154,17 @@ async def ejecutar(contexto: ContextoPedido) -> tuple[Pedido, int]:
         items=contexto.lineas,
         total=contexto.total,
         pago=Pago(metodo=contexto.datos.metodo_pago, estado_pago=EstadoPago.PENDIENTE),
+        idempotency_key=contexto.idempotency_key,
     )
 
     hechos: list[Paso] = []
     for paso in PASOS:
         try:
             detalle, cambios = await paso.ejecutar(pedido)
+        except repositorio.PedidoDuplicado:
+            # El pedido no llegó a crearse (ya había otro con esa Idempotency-Key):
+            # no hay nada que registrar ni compensar.
+            raise
         except Exception as error:
             fallo = error if isinstance(error, FalloDePaso) else _fallo_inesperado(paso, error)
             pedido = await _registrar(pedido, paso.nombre, ResultadoPaso.FALLO, fallo.motivo, fallo.cambios)
