@@ -1,0 +1,426 @@
+{
+  "info": {
+    "name": "ShopExpress",
+    "description": "Tarea 2 - Taller NoSQL. Levantar el sistema con `docker compose up --build -d --wait` y correr la colección completa en orden (Run collection): cada request guarda los ids que necesita el siguiente en las variables de la colección.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "usuarios_url",
+      "value": "http://localhost:8001"
+    },
+    {
+      "key": "catalogo_url",
+      "value": "http://localhost:8002"
+    },
+    {
+      "key": "pedidos_url",
+      "value": "http://localhost:8003"
+    },
+    {
+      "key": "clave_seudonimizacion",
+      "value": "clave-de-demo-shopexpress"
+    },
+    {
+      "key": "email",
+      "value": ""
+    },
+    {
+      "key": "nro_documento",
+      "value": ""
+    },
+    {
+      "key": "usuario_id",
+      "value": ""
+    },
+    {
+      "key": "producto_id",
+      "value": ""
+    },
+    {
+      "key": "producto_escaso_id",
+      "value": ""
+    },
+    {
+      "key": "precio",
+      "value": ""
+    },
+    {
+      "key": "stock_inicial",
+      "value": ""
+    },
+    {
+      "key": "cantidad_vendida",
+      "value": ""
+    },
+    {
+      "key": "pedido_id",
+      "value": ""
+    },
+    {
+      "key": "pedido_rechazado_id",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Crear usuario",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{usuarios_url}}/api/usuarios",
+        "description": "POST /api/usuarios. Genera email y documento al azar para poder correr la colección muchas veces sin chocar con los índices únicos. Guarda el id en {{usuario_id}}.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tipo_documento\": \"DNI\",\n  \"nro_documento\": \"{{nro_documento}}\",\n  \"nombre\": \"Juan\",\n  \"apellido\": \"Pérez\",\n  \"email\": \"{{email}}\",\n  \"direcciones\": [\n    {\n      \"calle\": \"Av. Principal 123\",\n      \"ciudad\": \"Montevideo\",\n      \"codigo_postal\": \"11000\"\n    }\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const sufijo = Date.now().toString();",
+              "pm.collectionVariables.set('email', `juan.${sufijo}@example.com`);",
+              "pm.collectionVariables.set('nro_documento', sufijo.slice(-8));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "const usuario = pm.response.json();",
+              "pm.test('El id lo pone el servidor, con prefijo usr_', () => pm.expect(usuario.id).to.match(/^usr_/));",
+              "pm.test('Historial de pedidos vacío', () => pm.expect(usuario.historial_pedidos).to.eql([]));",
+              "pm.test('Direcciones embebidas en el usuario', () => pm.expect(usuario.direcciones).to.have.lengthOf(1));",
+              "pm.collectionVariables.set('usuario_id', usuario.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2.1 Crear producto (stock 10)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{catalogo_url}}/api/productos",
+        "description": "POST /api/productos. Producto para el pedido OK y el pedido con pago rechazado. Guarda {{producto_id}}.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"nombre\": \"Auriculares inalámbricos\",\n  \"descripcion\": \"Bluetooth 5.3, 30 horas de batería\",\n  \"categoria\": \"Electrónica\",\n  \"precio\": 25.5,\n  \"stock\": 10\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "const producto = pm.response.json();",
+              "pm.test('El id tiene prefijo prod_', () => pm.expect(producto.id).to.match(/^prod_/));",
+              "pm.test('Tiene categoría', () => pm.expect(producto.categoria).to.eql('Electrónica'));",
+              "pm.collectionVariables.set('producto_id', producto.id);",
+              "pm.collectionVariables.set('precio', producto.precio);",
+              "pm.collectionVariables.set('stock_inicial', producto.stock);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2.2 Crear producto (stock 2)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{catalogo_url}}/api/productos",
+        "description": "POST /api/productos. Producto con poco stock, para el pedido sin stock. Guarda {{producto_escaso_id}}.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"nombre\": \"Consola edición limitada\",\n  \"descripcion\": \"Quedan pocas unidades\",\n  \"categoria\": \"Videojuegos\",\n  \"precio\": 499.99,\n  \"stock\": 2\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "pm.collectionVariables.set('producto_escaso_id', pm.response.json().id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Consultar producto",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{catalogo_url}}/api/productos/{{producto_id}}",
+        "description": "GET /api/productos/{id}. El header X-Cache dice si salió de Redis (HIT) o de Mongo (MISS). Mandalo dos veces seguidas para ver el cambio de MISS a HIT."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('Muestra el stock disponible', () => pm.expect(pm.response.json().stock).to.eql(pm.collectionVariables.get('stock_inicial')));",
+              "pm.test('Header X-Cache (HIT o MISS)', () => pm.expect(pm.response.headers.get('X-Cache')).to.be.oneOf(['HIT', 'MISS']));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Pedido OK",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{$guid}}"
+          }
+        ],
+        "url": "{{pedidos_url}}/api/pedidos",
+        "description": "POST /api/pedidos. Pasa por toda la cadena (datos, idempotencia, usuario, stock, total) y la SAGA (crear, reservar stock, pagar, confirmar). Queda CONFIRMADO. Guarda {{pedido_id}}.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"usuario_id\": \"{{usuario_id}}\",\n  \"items\": [\n    {\n      \"producto_id\": \"{{producto_id}}\",\n      \"cantidad\": 2\n    }\n  ],\n  \"metodo_pago\": \"TARJETA_CREDITO\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "const pedido = pm.response.json();",
+              "pm.test('Estado CONFIRMADO', () => pm.expect(pedido.estado).to.eql('CONFIRMADO'));",
+              "pm.test('Pago APROBADO con transacción tx_', () => {",
+              "    pm.expect(pedido.pago.estado_pago).to.eql('APROBADO');",
+              "    pm.expect(pedido.pago.transaccion_id).to.match(/^tx_/);",
+              "});",
+              "pm.test('Total calculado con el precio del catálogo', () => pm.expect(pedido.total).to.eql(2 * pm.collectionVariables.get('precio')));",
+              "pm.test('La saga ejecutó los 4 pasos', () => pm.expect(pedido.historial.map(p => p.paso))",
+              "    .to.eql(['CREAR_PEDIDO', 'RESERVAR_STOCK', 'PROCESAR_PAGO', 'CONFIRMAR_PEDIDO']));",
+              "pm.collectionVariables.set('pedido_id', pedido.pedido_id);",
+              "pm.collectionVariables.set('cantidad_vendida', 2);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Pedido sin stock",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{$guid}}"
+          }
+        ],
+        "url": "{{pedidos_url}}/api/pedidos",
+        "description": "POST /api/pedidos pidiendo 5 unidades de un producto con stock 2. Lo corta ValidadorDeStock (un eslabón de la cadena) con 409: la saga ni arranca y no se crea ningún pedido.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"usuario_id\": \"{{usuario_id}}\",\n  \"items\": [\n    {\n      \"producto_id\": \"{{producto_escaso_id}}\",\n      \"cantidad\": 5\n    }\n  ],\n  \"metodo_pago\": \"TARJETA_CREDITO\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('409 Conflict', () => pm.response.to.have.status(409));",
+              "pm.test('Dice qué producto no tiene stock', () => pm.expect(pm.response.json().detail).to.include('Stock insuficiente'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Pedido con pago rechazado",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{$guid}}"
+          }
+        ],
+        "url": "{{pedidos_url}}/api/pedidos",
+        "description": "POST /api/pedidos con TARJETA_RECHAZADA (la pasarela simulada lo rechaza). El stock ya estaba reservado, así que la SAGA compensa en orden inverso: libera el stock y cancela el pedido.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"usuario_id\": \"{{usuario_id}}\",\n  \"items\": [\n    {\n      \"producto_id\": \"{{producto_id}}\",\n      \"cantidad\": 3\n    }\n  ],\n  \"metodo_pago\": \"TARJETA_RECHAZADA\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('402 Payment Required', () => pm.response.to.have.status(402));",
+              "const pedido = pm.response.json();",
+              "pm.test('Estado CANCELADO', () => pm.expect(pedido.estado).to.eql('CANCELADO'));",
+              "pm.test('Pago RECHAZADO', () => pm.expect(pedido.pago.estado_pago).to.eql('RECHAZADO'));",
+              "pm.test('Compensaciones en orden inverso', () => pm.expect(pedido.historial.map(p => `${p.paso} ${p.resultado}`)).to.eql([",
+              "    'CREAR_PEDIDO OK', 'RESERVAR_STOCK OK', 'PROCESAR_PAGO FALLO', 'LIBERAR_STOCK OK', 'CANCELAR_PEDIDO OK',",
+              "]));",
+              "pm.collectionVariables.set('pedido_rechazado_id', pedido.pedido_id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Ver el stock después del rechazo",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{catalogo_url}}/api/productos/{{producto_id}}",
+        "description": "GET /api/productos/{id}. Tiene que haber bajado solo por el pedido OK: las unidades del pedido rechazado se devolvieron con la compensación LIBERAR_STOCK."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const esperado = pm.collectionVariables.get('stock_inicial') - pm.collectionVariables.get('cantidad_vendida');",
+              "pm.test(`Stock = ${esperado}: solo descontó el pedido OK`, () => pm.expect(pm.response.json().stock).to.eql(esperado));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "8.1 Exportar usuarios (JSON)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{usuarios_url}}/api/usuarios/exportar",
+        "description": "GET /api/usuarios/exportar. Email y documento seudonimizados con HMAC-SHA256, nombre y apellido solo con iniciales, direcciones sin la calle."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const cripto = require('crypto-js');",
+              "const hash = valor => cripto.HmacSHA256(valor, pm.collectionVariables.get('clave_seudonimizacion')).toString();",
+              "const usuario = pm.response.json().find(u => u.email_hash === hash(pm.collectionVariables.get('email')));",
+              "pm.test('El usuario creado está en la exportación', () => pm.expect(usuario).to.exist);",
+              "pm.test('Nombre y apellido solo con iniciales', () => {",
+              "    pm.expect(usuario.nombre).to.eql('J.');",
+              "    pm.expect(usuario.apellido).to.eql('P.');",
+              "});",
+              "pm.test('Cuenta el pedido confirmado', () => pm.expect(usuario.cantidad_pedidos).to.eql(1));",
+              "pm.test('No aparece el email ni el documento reales', () => {",
+              "    pm.expect(pm.response.text()).to.not.include(pm.collectionVariables.get('email'));",
+              "    pm.expect(pm.response.text()).to.not.include(pm.collectionVariables.get('nro_documento'));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "8.2 Exportar usuarios (CSV)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{usuarios_url}}/api/usuarios/exportar?formato=csv",
+        "description": "GET /api/usuarios/exportar?formato=csv. Lo mismo, como archivo usuarios.csv (en Postman: Send and Download para guardarlo)."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('Es un CSV', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('text/csv'));",
+              "pm.test('Se descarga como archivo', () => pm.expect(pm.response.headers.get('Content-Disposition')).to.include('usuarios.csv'));",
+              "pm.test('Primera fila con las columnas', () => pm.expect(pm.response.text().split('\\n')[0]).to.include('email_hash'));",
+              "pm.test('No aparece el email real', () => pm.expect(pm.response.text()).to.not.include(pm.collectionVariables.get('email')));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
