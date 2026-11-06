@@ -60,6 +60,10 @@
     {
       "key": "pedido_rechazado_id",
       "value": ""
+    },
+    {
+      "key": "idempotency_key",
+      "value": ""
     }
   ],
   "item": [
@@ -108,6 +112,52 @@
               "pm.test('Historial de pedidos vacío', () => pm.expect(usuario.historial_pedidos).to.eql([]));",
               "pm.test('Direcciones embebidas en el usuario', () => pm.expect(usuario.direcciones).to.have.lengthOf(1));",
               "pm.collectionVariables.set('usuario_id', usuario.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "1.2 Consultar usuario",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{usuarios_url}}/api/usuarios/{{usuario_id}}",
+        "description": "GET /api/usuarios/{id}. Primera lectura: no está en Redis, sale de Mongo (X-Cache: MISS) y queda guardado en la caché."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const usuario = pm.response.json();",
+              "pm.test('Es el usuario creado', () => pm.expect(usuario.id).to.eql(pm.collectionVariables.get('usuario_id')));",
+              "pm.test('Direcciones embebidas en el usuario', () => pm.expect(usuario.direcciones[0].ciudad).to.eql('Montevideo'));",
+              "pm.test('Primera lectura desde Mongo (X-Cache: MISS)', () => pm.expect(pm.response.headers.get('X-Cache')).to.eql('MISS'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "1.3 Consultar usuario otra vez (caché)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{usuarios_url}}/api/usuarios/{{usuario_id}}",
+        "description": "GET /api/usuarios/{id} por segunda vez: ahora sale de Redis sin tocar Mongo (X-Cache: HIT). Es la lectura rápida con consistencia eventual. Mandarlo antes de que pase el TTL (60 s)."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('Es el usuario creado', () => pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('usuario_id')));",
+              "pm.test('Segunda lectura desde Redis (X-Cache: HIT)', () => pm.expect(pm.response.headers.get('X-Cache')).to.eql('HIT'));"
             ]
           }
         }
@@ -211,6 +261,28 @@
       ]
     },
     {
+      "name": "3.2 Consultar producto otra vez (caché)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{catalogo_url}}/api/productos/{{producto_id}}",
+        "description": "GET /api/productos/{id} por segunda vez: sale de Redis (X-Cache: HIT). Mandarlo antes de que pase el TTL del catálogo (30 s)."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('Muestra el stock disponible', () => pm.expect(pm.response.json().stock).to.eql(pm.collectionVariables.get('stock_inicial')));",
+              "pm.test('Segunda lectura desde Redis (X-Cache: HIT)', () => pm.expect(pm.response.headers.get('X-Cache')).to.eql('HIT'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "4. Pedido OK",
       "request": {
         "method": "POST",
@@ -221,11 +293,11 @@
           },
           {
             "key": "Idempotency-Key",
-            "value": "{{$guid}}"
+            "value": "{{idempotency_key}}"
           }
         ],
         "url": "{{pedidos_url}}/api/pedidos",
-        "description": "POST /api/pedidos. Pasa por toda la cadena (datos, idempotencia, usuario, stock, total) y la SAGA (crear, reservar stock, pagar, confirmar). Queda CONFIRMADO. Guarda {{pedido_id}}.",
+        "description": "POST /api/pedidos. Pasa por toda la cadena (datos, idempotencia, usuario, stock, total) y la SAGA (crear, reservar stock, pagar, confirmar). Queda CONFIRMADO. Guarda {{pedido_id}}. Su Idempotency-Key queda en {{idempotency_key}} para el 4.2 y el 4.3.",
         "body": {
           "mode": "raw",
           "raw": "{\n  \"usuario_id\": \"{{usuario_id}}\",\n  \"items\": [\n    {\n      \"producto_id\": \"{{producto_id}}\",\n      \"cantidad\": 2\n    }\n  ],\n  \"metodo_pago\": \"TARJETA_CREDITO\"\n}",
@@ -237,6 +309,16 @@
         }
       },
       "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Una clave nueva por compra. Se guarda para que 4.2 y 4.3 reusen la misma.",
+              "pm.collectionVariables.set('idempotency_key', pm.variables.replaceIn('{{$guid}}'));"
+            ]
+          }
+        },
         {
           "listen": "test",
           "script": {
@@ -254,6 +336,122 @@
               "    .to.eql(['CREAR_PEDIDO', 'RESERVAR_STOCK', 'PROCESAR_PAGO', 'CONFIRMAR_PEDIDO']));",
               "pm.collectionVariables.set('pedido_id', pedido.pedido_id);",
               "pm.collectionVariables.set('cantidad_vendida', 2);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4.2 Repetir el mismo pedido (misma Idempotency-Key)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{idempotency_key}}"
+          }
+        ],
+        "url": "{{pedidos_url}}/api/pedidos",
+        "description": "El mismo pedido del 4 con la misma Idempotency-Key, como si el cliente reintentara. No crea otro pedido: devuelve el que ya existe con 200 (no 201). Después, el 7 muestra que el stock no se descontó dos veces.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"usuario_id\": \"{{usuario_id}}\",\n  \"items\": [\n    {\n      \"producto_id\": \"{{producto_id}}\",\n      \"cantidad\": 2\n    }\n  ],\n  \"metodo_pago\": \"TARJETA_CREDITO\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK (no se creó nada nuevo)', () => pm.response.to.have.status(200));",
+              "const pedido = pm.response.json();",
+              "pm.test('Devuelve el mismo pedido del 4', () => pm.expect(pedido.pedido_id).to.eql(pm.collectionVariables.get('pedido_id')));",
+              "pm.test('Sigue CONFIRMADO', () => pm.expect(pedido.estado).to.eql('CONFIRMADO'));",
+              "pm.test('La saga no se volvió a ejecutar', () => pm.expect(pedido.historial).to.have.lengthOf(4));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4.3 Misma Idempotency-Key con otro pedido",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{idempotency_key}}"
+          }
+        ],
+        "url": "{{pedidos_url}}/api/pedidos",
+        "description": "La clave del 4 pero con otra cantidad: es un error del cliente (cada compra lleva una clave nueva). Se rechaza con 422 y no se crea nada.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"usuario_id\": \"{{usuario_id}}\",\n  \"items\": [\n    {\n      \"producto_id\": \"{{producto_id}}\",\n      \"cantidad\": 1\n    }\n  ],\n  \"metodo_pago\": \"TARJETA_CREDITO\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('422 Unprocessable Entity', () => pm.response.to.have.status(422));",
+              "pm.test('Explica que la clave ya se usó', () => pm.expect(pm.response.json().detail).to.include('ya se usó'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4.4 Pedido sin Idempotency-Key",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{pedidos_url}}/api/pedidos",
+        "description": "Sin el header Idempotency-Key no se puede garantizar que el pedido sea único, así que ValidadorDeIdempotencia corta la cadena con 400.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"usuario_id\": \"{{usuario_id}}\",\n  \"items\": [\n    {\n      \"producto_id\": \"{{producto_id}}\",\n      \"cantidad\": 2\n    }\n  ],\n  \"metodo_pago\": \"TARJETA_CREDITO\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+              "pm.test('Pide el header', () => pm.expect(pm.response.json().detail).to.include('Idempotency-Key'));"
             ]
           }
         }
@@ -338,6 +536,47 @@
               "    'CREAR_PEDIDO OK', 'RESERVAR_STOCK OK', 'PROCESAR_PAGO FALLO', 'LIBERAR_STOCK OK', 'CANCELAR_PEDIDO OK',",
               "]));",
               "pm.collectionVariables.set('pedido_rechazado_id', pedido.pedido_id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "6.2 Eventos del pedido rechazado",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{pedidos_url}}/api/pedidos/{{pedido_rechazado_id}}/eventos",
+        "description": "GET /api/pedidos/{id}/eventos. Cada paso y cada compensación de la saga quedó como evento, en orden. Aplicando los cambios de los eventos se reconstruye el pedido (base de Event Sourcing)."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const eventos = pm.response.json();",
+              "pm.test('Un evento por paso y por compensación, en orden', () => {",
+              "    pm.expect(eventos.map(e => e.secuencia)).to.eql([1, 2, 3, 4, 5]);",
+              "    pm.expect(eventos.map(e => `${e.paso} ${e.resultado}`)).to.eql([",
+              "        'CREAR_PEDIDO OK', 'RESERVAR_STOCK OK', 'PROCESAR_PAGO FALLO', 'LIBERAR_STOCK OK', 'CANCELAR_PEDIDO OK',",
+              "    ]);",
+              "});",
+              "pm.test('Con los eventos se reconstruye el pedido', () => {",
+              "    const pedido = {};",
+              "    for (const evento of eventos) {",
+              "        for (const { campo, valor } of evento.cambios) {",
+              "            const partes = campo.split('.');",
+              "            let destino = pedido;",
+              "            partes.slice(0, -1).forEach(p => destino = destino[p] = destino[p] || {});",
+              "            destino[partes[partes.length - 1]] = valor;",
+              "        }",
+              "    }",
+              "    pm.expect(pedido.usuario_id).to.eql(pm.collectionVariables.get('usuario_id'));",
+              "    pm.expect(pedido.estado).to.eql('CANCELADO');",
+              "    pm.expect(pedido.pago.estado_pago).to.eql('RECHAZADO');",
+              "});"
             ]
           }
         }

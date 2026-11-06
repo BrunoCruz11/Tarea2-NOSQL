@@ -492,12 +492,17 @@ en orden. Cada request guarda en variables los ids que usa la siguiente, así qu
 | # | Request | Qué verifica |
 |---|---|---|
 | 1 | Crear usuario | `201`, id `usr_…`, direcciones embebidas |
+| 1.2 / 1.3 | Consultar usuario dos veces | `200`; la primera sale de Mongo (`X-Cache: MISS`), la segunda de Redis (`HIT`) |
 | 2.1 / 2.2 | Crear productos (stock 10 y stock 2) | `201`, id `prod_…` |
-| 3 | Consultar producto | `200`, stock disponible, header `X-Cache` |
+| 3 / 3.2 | Consultar producto dos veces | `200`, stock disponible; la segunda sale de Redis (`HIT`) |
 | 4 | Pedido OK | `201`, `CONFIRMADO`, pago `APROBADO`, los 4 pasos de la saga |
+| 4.2 | Repetir el mismo pedido (misma `Idempotency-Key`) | `200` con el mismo pedido: no se crea otro |
+| 4.3 | Misma `Idempotency-Key` con otro pedido | `422` |
+| 4.4 | Pedido sin `Idempotency-Key` | `400` |
 | 5 | Pedido sin stock | `409` |
 | 6 | Pedido con pago rechazado | `402`, `CANCELADO`, compensaciones en orden inverso |
-| 7 | Ver el stock después del rechazo | El stock solo bajó por el pedido OK |
+| 6.2 | Eventos del pedido rechazado | Un evento por paso y compensación, en orden; con ellos se reconstruye el pedido |
+| 7 | Ver el stock después del rechazo | El stock solo bajó una vez, por el pedido OK (ni el repetido ni el rechazado descontaron) |
 | 8.1 / 8.2 | Exportar usuarios (JSON y CSV) | Datos seudonimizados |
 
 En la app de Postman: **Import** → el archivo `.json` → clic derecho en la colección → **Run collection**.
