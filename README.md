@@ -145,6 +145,14 @@ insertar el pedido, y al otro se le devuelve el pedido del primero.
 flowchart LR
     cliente(["Cliente<br/>Postman / curl"])
 
+    subgraph pedidos["Servicio de Pedidos y Pagos :8003"]
+        ps["pedidos-service<br/>FastAPI<br/>Cadena + Orquestador SAGA"]
+        pago["Pasarela de pagos<br/>simulada"]
+        mp[("mongo-pedidos<br/>rs0")]
+        ps --> pago
+        ps --> mp
+    end
+
     subgraph usuarios["Servicio de Usuarios :8001"]
         us["usuarios-service<br/>FastAPI"]
         ru[("redis-usuarios<br/>caché")]
@@ -161,17 +169,9 @@ flowchart LR
         cs -- "reserva de stock<br/>siempre en Mongo" --> mc
     end
 
-    subgraph pedidos["Servicio de Pedidos y Pagos :8003"]
-        ps["pedidos-service<br/>FastAPI<br/>Cadena + Orquestador SAGA"]
-        pago["Pasarela de pagos<br/>simulada"]
-        mp[("mongo-pedidos<br/>rs0")]
-        ps --> pago
-        ps --> mp
-    end
-
+    cliente -- "POST /api/pedidos" --> ps
     cliente -- "POST/GET /api/usuarios" --> us
     cliente -- "POST/GET /api/productos" --> cs
-    cliente -- "POST /api/pedidos" --> ps
 
     ps -- "GET usuario<br/>POST historial" --> us
     ps -- "GET producto<br/>POST reservas / liberar" --> cs
@@ -240,7 +240,6 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    autonumber
     actor C as Cliente
     participant P as Pedidos<br/>(orquestador)
     participant MP as mongo-pedidos
